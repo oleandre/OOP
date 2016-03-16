@@ -1,0 +1,491 @@
+#include <iostream>
+#include <fstream>                      // used for saving \ reading to \ from files.
+#include <functional>                   // used for callbacks
+#include "ListTool2A.h"                 // sort the class objects.
+
+using namespace std;
+
+const int   STRLEN                      = 80;
+const int   NUMMIN                      = 10000000;
+const int   NUMMAX                      = 99999999;
+
+const char  DOCTORS_FILE[]              = "./doctors.txt";
+const char  PRESCRIPTIONS_FILE[]        = "./prescriptions.txt";
+
+
+/**
+ * Function declarations
+ */
+int     get_int                         (const char * msg, int min, int max);
+char    get_char                        (const char * msg);
+char *  get_string                      (const char * msg);
+void    print_menu                      ();
+
+void    register_prescription           ();
+void    list_prescriptions_by_doctor    ();
+void    list_prescriptions_of_patient   ();
+void    remove_prescriptions_before_date();
+
+void    auto_save                       ();
+void    auto_load                       ();
+
+
+/**
+ * Prescription Class
+ */
+class Prescription
+        : public TextElement
+{
+    char *      _doctor;                // doctors name, used as list index.
+    int         _date;                  // date the prescription was registered.
+    char *      _patient;               // size unknown, use pointer to not waste space.
+    char *      _drugName;              // drug \ medicine name.
+    int         _drugDosage;            // mg per dosage.
+
+public:
+    Prescription (ifstream & stream, char * doctor)
+            : TextElement (doctor)                                   // Loads data from file.
+    {
+        _doctor = doctor;
+        stream >> _doctor >> _date >> _patient >> _drugName >> _drugDosage;
+    }
+
+    Prescription (char * doctor)
+            : TextElement (doctor)   // Register a new prescription.
+    {
+        cout << "\nRegistering new prescription:\n";
+
+        _doctor     = doctor;                                   // Store who registered the prescription.
+        _date       = get_int("Date [YYYYMMDD]", NUMMIN, NUMMAX);   // Register date. Format: YYYYMMDD.
+        _patient    = get_string("Name [patient]");                 // To whom is this prescription to? Patient name.
+        _drugName   = get_string("Medicine \\ drug [title]");       // Type of drug \ medicine name.
+        _drugDosage = get_int("Dosage [milligram]", 0, NUMMAX);     // Dosage in mg. No comma's, dot's nor space's!
+    }
+
+    ~Prescription()
+    {
+        delete [] _doctor;              // memory clean up.
+        delete [] _patient;             // memory clean up.
+        delete [] _drugName;            // memory clean up.
+    }
+
+    void display ()                                                 // Displays the objects data.
+    {
+        cout << "Doctor: " << _doctor
+            << "\nDate: " << _date
+            << "\nPatient: " << _patient
+            << "\nMedicine: " << _drugName
+            << "\nDosage per day: " << _drugDosage
+            << endl;
+    }
+
+    void save (ofstream & stream)                                   // saves data to file.
+    {
+        stream  << _doctor << "  " << _date << "  " << _patient
+                << "  " << _drugName << "  " << _drugDosage << endl;
+    }
+
+    bool hasDoctor(char * name)                                     // true when prescription name is _doctor.
+    {
+        return (strcmp(_doctor, name) == 0);
+    }
+
+    bool hasPatient (char * name)                                   // true when name is _patient.
+    {
+        return (strcmp(_patient, name) == 0); // returns 0 if equal.
+    }
+
+    bool expired (int date)                                         // Return true of the prescription is older.
+    {
+        return (_date < date);          // Returns true if the prescription is older than a given date.
+    }
+
+    char * doctor ()
+    {
+        return _doctor;                 // Returns doctors name.
+    }
+};
+
+/**
+ * Doctors Class
+ */
+class Doctor
+        : public TextElement
+{
+    char *  _name;                      // Doctors full name.
+    char *  _address;                   // doctors street address.
+    int     _number;                    // Doctors mobile phone number.
+
+public:
+    Doctor (ifstream & stream, char * name)                         // Used to load data from file.
+            : TextElement (name)
+    {
+        _name = name;                                               // Gets name before init, due to TextElement.
+        stream >> _address >> _number;                              // Reads in the rest.
+    }                                                               // Use the load function to fill object.
+
+    Doctor (char * name)                                            // gets name from checking if doc exists.
+            : TextElement (name)                                    // When a new new prescription is registered.
+    {
+        cout << "\nRegistering new doctor:\n";
+        _name       = name;
+        _address    = get_string("Address [doctor]");
+        _number     = get_int("Phone nr. [doctor]", NUMMIN, NUMMAX);
+    }
+
+    ~Doctor()
+    {
+        delete [] _name;                // Removes the string pointers from address.
+        delete [] _address;             // Removes the string pointers from address.
+    }
+
+    void display ()                                                 // Prints out information about the doctor.
+    {
+        cout << "Name: " << _name
+        << "\nAddress: " << _address
+        << "\nPhone nr.: " << _number
+        << endl;
+    }
+
+    void save (ofstream & stream)                                   // saves data to file.
+    {
+        stream << _name << "  " << _address << "  " << _number << endl;
+    }
+};
+
+
+
+/**
+ * Class lists
+ */
+List * doctors;                         // List of all the doctors in memory.
+List * prescriptions;                   // List of all prescriptions in memory.
+
+/**
+ * callbacks for each class lists, similar to a mapping function
+ */
+using cb_prescription   = std::function<void(Prescription *)>;
+using cb_doctor         = std::function<void(Doctor *)>;        // Callback functions for lambdas. Supports
+                                                                // fetching pointers from outside its scope.
+
+/**
+ * Program function
+ */
+int main ()
+{
+    doctors         = new List(Sorted); // instantiate a new sorted list.
+    prescriptions   = new List(Sorted); // instantiate a new sorted list.
+
+    char choice;                        // Holds the menu choice later in the do{}while() loop.
+
+    auto_load();                        // loads all data from files into the lists above.
+
+    do {                                // do{}while() Loop to get user choices after each task.
+                                        //  auto_save() Is set behind each function that manipulates a list or object.
+        print_menu();                   // Print user menu.
+        choice = get_char("Choice");    // Gets user input.
+        switch(choice) {                // Matches input with allowed choices, if none match the user must try again.
+            case 'R': register_prescription();              auto_save();    break;
+            case 'L': list_prescriptions_by_doctor();                       break;
+            case 'P': list_prescriptions_of_patient();                      break;
+            case 'F': remove_prescriptions_before_date();   auto_save();    break;
+        }
+    } while (choice != 'Q');            // When the input is registered as 'Q', the loop stops and the program exits.
+
+    return EXIT_SUCCESS;                // Successful exit.
+}
+
+
+/**
+ *  Function definitions
+ */
+
+/**
+ * Returns an integers between the minimum and maximum given restrictions.
+ *
+ * @param string    msg     :message to be displayed to user
+ * @param int       min     :minimum int allowed
+ * @param int       max     :maximum int allowed
+ * return int
+ */
+int get_int (const char msg[], int min, int max)
+{
+    int input;
+
+    do {
+        cout << msg << ": ";            // displays input as "MSG: ".
+        cin >> input;  cin.ignore();    // removes line endings which causes problems for getline later.
+    } while (input < min || input > max); // Make sure the input is within range.
+
+    return input;
+}
+
+/**
+ * Returns a character array pointer. This array contains input from the terminal. No restrictions.
+ *
+ * @param char *    msg     :message to be displayed to user
+ * return char
+ */
+char get_char (const char msg[])
+{
+    char input;                         // Local character var
+
+    do {                                // do{}while() Loop to get a valid input.
+        cout << msg << ": ";            // displays input as "MSG: ".
+        cin.get(input); cin.ignore();   // removes line endings which causes problems for getline later.
+    } while (!input);                   // only continue when input is valid.
+
+    return toupper(input);              // Convert the character to uppercase and return it.
+}
+
+/**
+ * char * get_string (char * msg)
+ *
+ * @param char *    msg     :message to be displayed to user
+ * return char pointer
+ */
+char * get_string (const char msg[])
+{
+    char buffer[STRLEN];                // Temporary data storage for input. This helps to set char[] length.
+
+    do {                                // do{}while() Loop to get a valid input.
+        cout << msg << ": ";
+        cin.getline(buffer, STRLEN);    // Get terminal input with max string length restriction.
+    } while (!buffer);
+
+    //copy to input array
+    char * input = new char[strlen(buffer) + 1]; // +1 for \0. deletes it-self on scope end.
+    strcpy(input, buffer);              // Copy only the buffer content into the input pointer.
+
+    for (char * c = input; * c != '\0'; c++) { //
+        * c = (char) toupper(* c);      // Converts each char inside the array to upper case.
+    }
+
+    return input;                       // Return the content in upper case and no extra blank chars.
+}
+
+/**
+ * Prints out the main menu.
+ */
+void print_menu ()
+{
+    cout << "\n------------------COMMANDS------------------ \n"
+           << "R - Register prescription                    \n"
+           << "L - List doctor's prescriptions              \n"
+           << "P - List patient's prescriptions             \n"
+           << "F - Remove prescriptions before a given date \n"
+           << "Q - Quit                                     \n";
+}
+
+void loop_doctors (cb_doctor callback, bool add = true)         // Loops though global doctors, and using callback
+{                                                               //  sends the pointer av a parameter.
+    if (doctors->noOfElements() == NULL) {                      // Make sure there are elements,
+        cout << "No doctors added yet!" << endl;                //  print a msg and end function.
+        return;
+    }
+
+    for (int i = 1; i <= doctors->noOfElements(); i++) {        // Loops through every doctor.
+        Doctor * doctor = (Doctor *) doctors->removeNo(i);      // Gets element.
+        if (add) {                                              // Return the element to the list if needed.
+            doctors->add(doctor);
+        }
+        callback(doctor);                                       // Pass the doctor pointer as a argument back.
+    }
+}
+
+void loop_prescriptions (cb_prescription callback, bool add = true) // Loops though global doctors, and using callback
+{                                                               //  sends the pointer av a parameter.
+    if (prescriptions->noOfElements() == NULL) {                // Make sure there are elements,
+        cout << "No patients added yet!" << endl;               //  print a msg and end function.
+        return;
+    }
+
+    for (int i = 1; i <= prescriptions->noOfElements(); i++) {
+        Prescription * prescription = (Prescription *) prescriptions->removeNo(i);
+        if (add) {                                              // Return the element to the list if needed.
+            prescriptions->add(prescription);
+        }
+        callback(prescription);                                 // Pass the patient pointer as a argument back.
+    }
+}
+
+/**
+ * Registers a new prescription. If the doctor registering it
+ *  does not exist within the list, a new one is created.
+ */
+void register_prescription ()
+{
+    char * name = get_string("Name [doctor]");
+
+    if (!doctors->inList(name)) {       // Registers a new doctor if name is non existent.
+        Doctor * doctor = new Doctor (name);
+        doctors->add(doctor);           // Add the doctor to the list.
+    }
+
+    Prescription * paper = new Prescription (name);
+    prescriptions->add(paper);          // Add the new prescription to the list.
+
+    delete [] name;                     // clean up, remove from memory.
+}
+
+/**
+ * Lists all prescriptions a doctor has written.
+ */
+void list_prescriptions_by_doctor ()
+{
+    char * name = get_string("Name [doctor]");
+
+    if (!doctors->inList(name)) {       // check if doctor exists.
+        cout << "\tDoctor was not found!\n\n";
+        return;
+    }
+
+    // display doctor's prescriptions, using callback in for loop
+    loop_prescriptions([&] (Prescription * paper) {
+        if (paper->hasDoctor(name)) {
+            paper->display();
+        }
+    });
+
+    delete [] name;                     // clean up, remove from memory.
+}
+
+void list_prescriptions_of_patient ()
+{
+    char * name = get_string("Name [patient]");
+
+    // display patient's prescriptions
+    loop_prescriptions([&] (Prescription * paper) {
+        if (paper->hasPatient(name)) {  // If the patient exists within object..
+            paper->display();           //  display patient data.
+        }
+    });
+
+    delete [] name;                     // clean up, remove from memory.
+}
+
+/**
+ * Loops through prescriptions to delete expired ones. A date must be typed in the format YYYYMMDD.
+ */
+void remove_prescriptions_before_date ()
+{
+    int date = get_int("Date [YYYYMMDD]", NUMMIN, NUMMAX);
+
+    /**
+     * Find prescriptions and removes them. Add the doctor name of the prescription removed.
+     */
+    loop_prescriptions([&] (Prescription * paper) {
+        if (!paper->expired(date)) {    // Check if the paper is older than given date.
+            prescriptions->add(paper);  // It's not expired and then added again to the list.
+        } else if (!prescriptions->inList(paper->doctor())) {
+            doctors->remove(paper->doctor()); // After each deletion, check if the doctor exists
+        }                                     //  as a "index" in prescriptions, if not there arent
+    }, false);                                //  anymore prescriptions in his\her name. Delete doctor.
+}
+
+
+/**
+ * Clears the content of the files if they exists, and writes the current data in memory to them.
+ */
+void auto_save ()
+{
+    ofstream stream;
+
+    /**
+     * ofstream for saving files to doctors
+     */
+    stream.open(DOCTORS_FILE, ofstream::out | ofstream::trunc); //deletes content
+    if (!stream) {
+        cout << "Couldn't open doctorsFile stream...\n\n";
+        return;
+    }
+
+    loop_doctors([&] (Doctor * doctor) {
+        doctor->save(stream);           //Loops through each doctor and save them
+    });
+    stream.close();
+
+
+    /**
+     * ofstream for saving prescriptions
+     */
+    stream.open(PRESCRIPTIONS_FILE, ofstream::out | ofstream::trunc); //deletes content
+    if (!stream) {
+        cout << "Couldn't open prescriptionsFile stream...\n\n";
+        return;
+    }
+
+    loop_prescriptions([&] (Prescription * paper) {
+        paper->save(stream);            // loops through each prescription and saves it.
+    });
+    stream.close();
+
+
+    /**
+     * print out status that any potential changes has been saved!
+     */
+    cout << "All changes have been saved!\n\n";
+}
+
+void auto_load ()
+{
+    ifstream    stream;
+    char        buffer[STRLEN];             // tmp buffer to fetch data from file.
+
+    /**
+     * load doctors
+     */
+    stream.open(DOCTORS_FILE, ifstream::in);
+    if (stream) {                           //if everything was ok, the file is accessed.
+        while (stream.good()) {             // runs while there are content
+            stream.getline(buffer, STRLEN); // gets the first data
+
+            char * doctorName = new char[strlen(buffer) + 1];
+            strcpy(doctorName, buffer);     //copy it into the var and ship it to the Doctor init
+
+            Doctor * doctor = new Doctor (stream, doctorName);
+            doctors->add(doctor);           // Add the object to the list
+        }
+        stream.close();
+    }
+
+
+    /**
+     * load prescriptions
+     */
+    stream.open(PRESCRIPTIONS_FILE, ifstream::in);
+    if (stream) {                           //if everything was ok, the file is accessed.
+        while (stream.good()) {             // runs while there are content
+            stream.getline(buffer, STRLEN); // gets the first data from the line
+
+            char * doctorName = new char[strlen(buffer) + 1];
+            strcpy(doctorName, buffer);     //copy it into the var and ship it to the Prescription init
+
+            Prescription * paper = new Prescription(stream, doctorName);
+            prescriptions->add(paper);      // Add the object to the list
+        }
+        stream.close();
+    }
+
+    cout << "Program ready!" << endl;   // let the user know the program is ready.
+}
+
+
+
+
+
+/**
+ *  Doctors.txt data format:
+ *      NAME  ADDRESS  PHONE_NUMBER
+ *  
+ *  Prescriptions.txt data format:
+ *      DOCTORNAME  DATE  PATIENTNAME  MEDICINE  DOSAGE
+ *      
+ *      
+ *  In listtool the prescriptions are saved with the index of the doctor who registered them.
+ *      This allows for faster checking if the doctors have any prescriptions left.
+ *      
+ *  Regarding the data structure there are two classes: DOCTORS and PRESCRIPTIONS, none of these 
+ *      contains another class structure within, therefore I do not see the need to draw two
+ *      circles for illustrating this.
+ */
